@@ -44,6 +44,10 @@ final class TranslationHistoryStore {
         save(current)
     }
 
+    func remove(id: UUID) {
+        save(entries().filter { $0.id != id })
+    }
+
     func removeAll() {
         save([])
     }
@@ -64,11 +68,13 @@ final class TranslationHistoryStore {
 }
 
 @MainActor
-final class HistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+final class HistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     private let tableView = NSTableView()
+    private let searchField = NSSearchField()
     private let originalView = NSTextView()
     private let translatedView = NSTextView()
     private let statusLabel = NSTextField(labelWithString: "")
+    private var allHistory: [TranslationHistoryEntry] = []
     private var history: [TranslationHistoryEntry] = []
 
     private let dateColumnID = NSUserInterfaceItemIdentifier("history.date")
@@ -104,6 +110,12 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource, 
 
     private func buildUI() {
         guard let contentView = window?.contentView else { return }
+
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "搜索原文或译文"
+        searchField.delegate = self
+        searchField.sendsSearchStringImmediately = true
+        contentView.addSubview(searchField)
 
         let tableScroll = NSScrollView()
         tableScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -152,9 +164,12 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource, 
         contentView.addSubview(actions)
 
         NSLayoutConstraint.activate([
+            searchField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
+            searchField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
+            searchField.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             tableScroll.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
             tableScroll.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
-            tableScroll.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
+            tableScroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 10),
             tableScroll.heightAnchor.constraint(equalToConstant: 185),
             detail.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
             detail.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
@@ -212,29 +227,55 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource, 
         statusLabel.textColor = .secondaryLabelColor
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let deleteEntry = NSButton(title: "删除选中", target: self, action: #selector(deleteSelectedEntry))
+        deleteEntry.bezelStyle = .texturedRounded
         let clear = NSButton(title: "清空历史", target: self, action: #selector(clearHistory))
         clear.bezelStyle = .texturedRounded
         row.addArrangedSubview(statusLabel)
         row.addArrangedSubview(copyOriginal)
         row.addArrangedSubview(copyTranslated)
         row.addArrangedSubview(spacer)
+        row.addArrangedSubview(deleteEntry)
         row.addArrangedSubview(clear)
         return row
     }
 
     private func reload() {
-        history = TranslationHistoryStore.shared.entries()
+        allHistory = TranslationHistoryStore.shared.entries()
+        applyFilter()
+    }
+
+    private func applyFilter() {
+        let keyword = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if keyword.isEmpty {
+            history = allHistory
+        } else {
+            history = allHistory.filter {
+                $0.original.localizedCaseInsensitiveContains(keyword)
+                    || $0.translated.localizedCaseInsensitiveContains(keyword)
+            }
+        }
+
         tableView.reloadData()
         if history.isEmpty {
             originalView.string = ""
             translatedView.string = ""
-            statusLabel.stringValue = "近 7 天暂无翻译记录"
+            statusLabel.stringValue = keyword.isEmpty
+                ? "近 7 天暂无翻译记录"
+                : "没有匹配“\(keyword)”的记录"
             return
         }
 
-        statusLabel.stringValue = "近 7 天共 \(history.count) 条"
+        statusLabel.stringValue = keyword.isEmpty
+            ? "近 7 天共 \(history.count) 条"
+            : "匹配 \(history.count) 条（共 \(allHistory.count) 条）"
         tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         showEntry(history[0])
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as? NSSearchField === searchField else { return }
+        applyFilter()
     }
 
     private func showEntry(_ entry: TranslationHistoryEntry) {
@@ -295,8 +336,26 @@ final class HistoryWindowController: NSWindowController, NSTableViewDataSource, 
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    @objc private func deleteSelectedEntry() {
+        let row = tableView.selectedRow
+        guard history.indices.contains(row) else { return }
+        TranslationHistoryStore.shared.remove(id: history[row].id)
+        reload()
+    }
+
     @objc private func clearHistory() {
+        guard allHistory.isEmpty == false else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "清空翻译历史？"
+        alert.informativeText = "将删除近 7 天的全部 \(allHistory.count) 条记录，此操作无法撤销。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "清空")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
         TranslationHistoryStore.shared.removeAll()
+        searchField.stringValue = ""
         reload()
     }
 

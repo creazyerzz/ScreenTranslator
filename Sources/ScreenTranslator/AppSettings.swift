@@ -30,6 +30,10 @@ final class AppSettings {
         "claude-sonnet-4-5-20250929-thinking"
     ]
     static let defaultModel = "gpt-5.4-mini"
+    static let commonTargetLanguages = [
+        "中文", "English", "日本語", "한국어",
+        "Français", "Deutsch", "Español", "Русский", "Português"
+    ]
 
     enum Keys {
         static let baseURL = "baseURL"
@@ -37,6 +41,7 @@ final class AppSettings {
         static let targetLanguage = "targetLanguage"
         static let sourceLanguage = "sourceLanguage"
         static let apiKey = "apiKey"
+        static let autoCopyTranslation = "autoCopyTranslation"
     }
 
     var baseURL: String {
@@ -66,6 +71,11 @@ final class AppSettings {
     var apiKey: String {
         get { Self.defaults.string(forKey: Keys.apiKey) ?? "" }
         set { Self.defaults.set(newValue, forKey: Keys.apiKey) }
+    }
+
+    var autoCopyTranslation: Bool {
+        get { Self.defaults.bool(forKey: Keys.autoCopyTranslation) }
+        set { Self.defaults.set(newValue, forKey: Keys.autoCopyTranslation) }
     }
 
     static func normalizedModel(_ value: String?) -> String? {

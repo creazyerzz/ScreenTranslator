@@ -74,6 +74,10 @@ final class CaptureOverlayView: NSView {
         }
     }
 
+    override func rightMouseDown(with event: NSEvent) {
+        cancel()
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard isCompleting == false else { return }
         startPoint = boundedPoint(from: event)
@@ -130,7 +134,7 @@ final class CaptureOverlayView: NSView {
     }
 
     private func drawInstruction() {
-        let text = "拖动选择要翻译的屏幕区域，按 Esc 取消"
+        let text = "拖动选择要翻译的屏幕区域，按 Esc 或右键取消"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 20, weight: .medium),
             .foregroundColor: NSColor.white

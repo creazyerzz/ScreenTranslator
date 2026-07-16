@@ -2,13 +2,33 @@ import AppKit
 
 @MainActor
 final class ResultWindowController: NSWindowController {
+    enum DisplayState {
+        case recognizing
+        case translating(original: String)
+        case success(original: String, translated: String)
+        case failure(original: String, message: String)
+    }
+
+    var onRetranslate: ((String) -> Void)?
+
     private let originalView = NSTextView()
     private let translatedView = NSTextView()
     private let originalCountLabel = NSTextField(labelWithString: "0 字")
     private let translatedCountLabel = NSTextField(labelWithString: "0 字")
+    private let spinner = NSProgressIndicator()
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let copyTranslatedButton: NSButton
+    private let copyOriginalButton: NSButton
+    private let retranslateButton: NSButton
+    private var copyFeedbackTask: Task<Void, Never>?
+    private var currentOriginal = ""
 
     init() {
-        let window = NSPanel(
+        copyTranslatedButton = NSButton(title: "复制译文", target: nil, action: nil)
+        copyOriginalButton = NSButton(title: "复制原文", target: nil, action: nil)
+        retranslateButton = NSButton(title: "重新翻译", target: nil, action: nil)
+
+        let window = KeyClosablePanel(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 520),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -27,15 +47,59 @@ final class ResultWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func show(original: String, translated: String) {
+    func apply(state: DisplayState) {
+        switch state {
+        case .recognizing:
+            currentOriginal = ""
+            setTexts(original: "", translated: "")
+            setBusy(true, status: "正在识别文字...")
+            retranslateButton.isEnabled = false
+        case .translating(let original):
+            currentOriginal = original
+            setTexts(original: original, translated: "")
+            setBusy(true, status: "正在翻译...")
+            retranslateButton.isEnabled = false
+        case .success(let original, let translated):
+            currentOriginal = original
+            setTexts(original: original, translated: translated)
+            setBusy(false, status: "")
+            retranslateButton.isEnabled = original.isEmpty == false
+            if AppSettings.shared.autoCopyTranslation, translated.isEmpty == false {
+                copyToPasteboard(translated)
+                flashStatus("译文已自动复制到剪贴板")
+            }
+        case .failure(let original, let message):
+            currentOriginal = original
+            setTexts(original: original, translated: message)
+            setBusy(false, status: "")
+            retranslateButton.isEnabled = original.isEmpty == false
+        }
+        presentWindow()
+    }
+
+    private func setTexts(original: String, translated: String) {
         originalView.string = original
         translatedView.string = translated
         originalCountLabel.stringValue = "\(original.count) 字"
         translatedCountLabel.stringValue = "\(translated.count) 字"
-
         scrollToBeginning(originalView)
         scrollToBeginning(translatedView)
+    }
 
+    private func setBusy(_ busy: Bool, status: String) {
+        statusLabel.stringValue = status
+        if busy {
+            spinner.isHidden = false
+            spinner.startAnimation(nil)
+        } else {
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
+        }
+        copyTranslatedButton.isEnabled = busy == false
+        copyOriginalButton.isEnabled = busy == false
+    }
+
+    private func presentWindow() {
         if window?.isVisible == false {
             window?.center()
         }
@@ -147,33 +211,50 @@ final class ResultWindowController: NSWindowController {
         row.distribution = .fill
         row.spacing = 8
 
-        let copyOriginal = button(
-            title: "复制原文",
+        configure(
+            button: copyOriginalButton,
             symbol: "doc.on.doc",
             action: #selector(copyOriginalText)
         )
-        let copyTranslated = button(
-            title: "复制译文",
+        configure(
+            button: copyTranslatedButton,
             symbol: "doc.on.doc.fill",
             action: #selector(copyTranslation)
         )
+        configure(
+            button: retranslateButton,
+            symbol: "arrow.clockwise",
+            action: #selector(retranslate)
+        )
+        retranslateButton.toolTip = "使用当前设置重新翻译原文"
+
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isHidden = true
+
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.font = .systemFont(ofSize: 12)
+
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let close = NSButton(title: "关闭", target: self, action: #selector(closeWindow))
         close.keyEquivalent = "\r"
 
-        row.addArrangedSubview(copyOriginal)
-        row.addArrangedSubview(copyTranslated)
+        row.addArrangedSubview(copyOriginalButton)
+        row.addArrangedSubview(copyTranslatedButton)
+        row.addArrangedSubview(retranslateButton)
+        row.addArrangedSubview(spinner)
+        row.addArrangedSubview(statusLabel)
         row.addArrangedSubview(spacer)
         row.addArrangedSubview(close)
         return row
     }
 
-    private func button(title: String, symbol: String, action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    private func configure(button: NSButton, symbol: String, action: Selector) {
+        button.target = self
+        button.action = action
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: button.title)
         button.imagePosition = .imageLeading
-        return button
     }
 
     private func scrollToBeginning(_ textView: NSTextView) {
@@ -181,17 +262,45 @@ final class ResultWindowController: NSWindowController {
         textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
     }
 
-    @objc private func copyTranslation() {
+    private func copyToPasteboard(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(translatedView.string, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func flashStatus(_ message: String) {
+        copyFeedbackTask?.cancel()
+        statusLabel.stringValue = message
+        copyFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard Task.isCancelled == false else { return }
+            self?.statusLabel.stringValue = ""
+        }
+    }
+
+    @objc private func copyTranslation() {
+        copyToPasteboard(translatedView.string)
+        flashStatus("译文已复制")
     }
 
     @objc private func copyOriginalText() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(originalView.string, forType: .string)
+        copyToPasteboard(originalView.string)
+        flashStatus("原文已复制")
+    }
+
+    @objc private func retranslate() {
+        guard currentOriginal.isEmpty == false else { return }
+        onRetranslate?(currentOriginal)
     }
 
     @objc private func closeWindow() {
         window?.orderOut(nil)
+    }
+}
+
+/// 按 Esc 可直接关闭的浮动面板。
+@MainActor
+final class KeyClosablePanel: NSPanel {
+    override func cancelOperation(_ sender: Any?) {
+        orderOut(nil)
     }
 }

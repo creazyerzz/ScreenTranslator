@@ -4,14 +4,20 @@ import AppKit
 final class SettingsWindowController: NSWindowController {
     private let baseURLField = NSTextField()
     private let modelPopup = NSPopUpButton()
-    private let targetLanguageField = NSTextField()
-    private let apiKeyField = NSTextField()
+    private let targetLanguageCombo = NSComboBox()
+    private let apiKeySecureField = NSSecureTextField()
+    private let apiKeyPlainField = NSTextField()
+    private let revealKeyButton = NSButton()
+    private let autoCopyCheckbox = NSButton(checkboxWithTitle: "翻译完成后自动复制译文", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
+    private let testButton = NSButton()
+    private let testSpinner = NSProgressIndicator()
     private var modelRequest: URLSessionDataTask?
+    private var isKeyRevealed = false
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 280),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 320),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -43,7 +49,9 @@ final class SettingsWindowController: NSWindowController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(stack)
 
-        stack.addArrangedSubview(row(label: "API 地址", field: baseURLField))
+        stack.addArrangedSubview(row(label: "API 地址", control: baseURLField))
+        baseURLField.placeholderString = "https://example.com/v1/chat/completions"
+
         modelPopup.addItems(withTitles: AppSettings.fallbackModels)
         modelPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
 
@@ -52,40 +60,79 @@ final class SettingsWindowController: NSWindowController {
             systemSymbolName: "arrow.clockwise",
             accessibilityDescription: "刷新模型列表"
         )
-        refreshModelsButton.bezelStyle = NSButton.BezelStyle.texturedRounded
+        refreshModelsButton.bezelStyle = .texturedRounded
         refreshModelsButton.toolTip = "从当前 API 刷新模型列表"
-        refreshModelsButton.setContentHuggingPriority(
-            NSLayoutConstraint.Priority.required,
-            for: NSLayoutConstraint.Orientation.horizontal
-        )
+        refreshModelsButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let modelControls = NSStackView(views: [modelPopup, refreshModelsButton])
         modelControls.orientation = .horizontal
         modelControls.alignment = .centerY
         modelControls.spacing = 8
         stack.addArrangedSubview(row(label: "模型", control: modelControls))
-        stack.addArrangedSubview(row(label: "目标语言", field: targetLanguageField))
-        stack.addArrangedSubview(row(label: "API Key", field: apiKeyField))
-        apiKeyField.placeholderString = "sk-..."
+
+        targetLanguageCombo.usesDataSource = false
+        targetLanguageCombo.addItems(withObjectValues: AppSettings.commonTargetLanguages)
+        targetLanguageCombo.completes = true
+        targetLanguageCombo.toolTip = "可从列表选择，也可以直接输入任意语言"
+        stack.addArrangedSubview(row(label: "目标语言", control: targetLanguageCombo))
+
+        apiKeySecureField.placeholderString = "sk-..."
+        apiKeyPlainField.placeholderString = "sk-..."
+        apiKeyPlainField.isHidden = true
+
+        revealKeyButton.target = self
+        revealKeyButton.action = #selector(toggleKeyVisibility)
+        revealKeyButton.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "显示 API Key")
+        revealKeyButton.bezelStyle = .texturedRounded
+        revealKeyButton.toolTip = "显示 / 隐藏 API Key"
+        revealKeyButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        let keyControls = NSStackView(views: [apiKeySecureField, apiKeyPlainField, revealKeyButton])
+        keyControls.orientation = .horizontal
+        keyControls.alignment = .centerY
+        keyControls.spacing = 8
+        stack.addArrangedSubview(row(label: "API Key", control: keyControls))
+
+        autoCopyCheckbox.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        stack.addArrangedSubview(row(label: "", control: autoCopyCheckbox))
 
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.maximumNumberOfLines = 2
         stack.addArrangedSubview(statusLabel)
 
         let buttonRow = NSStackView()
         buttonRow.orientation = .horizontal
         buttonRow.alignment = .centerY
-        buttonRow.distribution = .gravityAreas
+        buttonRow.spacing = 8
 
         let hint = NSTextField(labelWithString: "快捷键：Control + Option + T")
         hint.textColor = .secondaryLabelColor
 
+        testSpinner.style = .spinning
+        testSpinner.controlSize = .small
+        testSpinner.isHidden = true
+
+        testButton.title = "测试连接"
+        testButton.target = self
+        testButton.action = #selector(testConnection)
+        testButton.bezelStyle = .rounded
+        testButton.toolTip = "用当前填写的地址、模型和 Key 发送一次试翻译"
+
         let saveButton = NSButton(title: "保存", target: self, action: #selector(save))
         saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r"
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         buttonRow.addArrangedSubview(hint)
+        buttonRow.addArrangedSubview(spacer)
+        buttonRow.addArrangedSubview(testSpinner)
+        buttonRow.addArrangedSubview(testButton)
         buttonRow.addArrangedSubview(saveButton)
         stack.addArrangedSubview(buttonRow)
+        buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
@@ -93,10 +140,6 @@ final class SettingsWindowController: NSWindowController {
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24)
         ])
-    }
-
-    private func row(label: String, field: NSTextField) -> NSView {
-        row(label: label, control: field)
     }
 
     private func row(label: String, control: NSView) -> NSView {
@@ -116,22 +159,103 @@ final class SettingsWindowController: NSWindowController {
         return row
     }
 
+    private var apiKeyValue: String {
+        get { isKeyRevealed ? apiKeyPlainField.stringValue : apiKeySecureField.stringValue }
+        set {
+            apiKeySecureField.stringValue = newValue
+            apiKeyPlainField.stringValue = newValue
+        }
+    }
+
+    @objc private func toggleKeyVisibility() {
+        let current = apiKeyValue
+        isKeyRevealed.toggle()
+        apiKeyValue = current
+        apiKeySecureField.isHidden = isKeyRevealed
+        apiKeyPlainField.isHidden = isKeyRevealed == false
+        revealKeyButton.image = NSImage(
+            systemSymbolName: isKeyRevealed ? "eye.slash" : "eye",
+            accessibilityDescription: isKeyRevealed ? "隐藏 API Key" : "显示 API Key"
+        )
+    }
+
     private func loadValues() {
         let settings = AppSettings.shared
         baseURLField.stringValue = settings.baseURL
         modelPopup.selectItem(withTitle: settings.model)
-        targetLanguageField.stringValue = settings.targetLanguage
-        apiKeyField.stringValue = settings.apiKey
+        targetLanguageCombo.stringValue = settings.targetLanguage
+        apiKeyValue = settings.apiKey
+        autoCopyCheckbox.state = settings.autoCopyTranslation ? .on : .off
     }
 
     @objc private func save() {
         let settings = AppSettings.shared
-        settings.baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.model = modelPopup.selectedItem?.title ?? AppSettings.defaultModel
-        settings.targetLanguage = targetLanguageField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetLanguage = targetLanguageCombo.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = apiKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        settings.apiKey = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        statusLabel.stringValue = "已保存。API Key 将以明文保存在本机应用配置中。"
+        guard baseURL.isEmpty == false, URL(string: baseURL)?.host != nil else {
+            showStatus("API 地址无效，请检查后再保存。", isError: true)
+            return
+        }
+        guard targetLanguage.isEmpty == false else {
+            showStatus("目标语言不能为空。", isError: true)
+            return
+        }
+
+        settings.baseURL = baseURL
+        settings.model = modelPopup.selectedItem?.title ?? AppSettings.defaultModel
+        settings.targetLanguage = targetLanguage
+        settings.apiKey = apiKey
+        settings.autoCopyTranslation = autoCopyCheckbox.state == .on
+        showStatus("已保存。API Key 以明文保存在本机应用配置中。", isError: false)
+    }
+
+    @objc private func testConnection() {
+        let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = apiKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard baseURL.isEmpty == false, apiKey.isEmpty == false else {
+            showStatus("请先填写 API 地址和 API Key。", isError: true)
+            return
+        }
+
+        // 用当前填写值构造临时配置测试，不影响已保存配置
+        let config = TranslatorConfig(
+            baseURL: baseURL,
+            model: modelPopup.selectedItem?.title ?? AppSettings.defaultModel,
+            apiKey: apiKey,
+            targetLanguage: targetLanguageCombo.stringValue.isEmpty ? "中文" : targetLanguageCombo.stringValue
+        )
+
+        setTesting(true)
+        showStatus("正在测试连接...", isError: false)
+        TranslatorClient(config: config).translate(text: "Hello") { [weak self] result in
+            Task { @MainActor in
+                self?.setTesting(false)
+                switch result {
+                case .success:
+                    self?.showStatus("连接成功，接口工作正常。", isError: false)
+                case .failure(let error):
+                    self?.showStatus("连接失败：\(error.localizedDescription)", isError: true)
+                }
+            }
+        }
+    }
+
+    private func setTesting(_ testing: Bool) {
+        testButton.isEnabled = testing == false
+        if testing {
+            testSpinner.isHidden = false
+            testSpinner.startAnimation(nil)
+        } else {
+            testSpinner.stopAnimation(nil)
+            testSpinner.isHidden = true
+        }
+    }
+
+    private func showStatus(_ message: String, isError: Bool) {
+        statusLabel.stringValue = message
+        statusLabel.textColor = isError ? .systemRed : .secondaryLabelColor
     }
 
     @objc private func refreshModels() {
@@ -142,7 +266,7 @@ final class SettingsWindowController: NSWindowController {
         modelRequest?.cancel()
 
         let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apiKey = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = apiKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let modelsURL = modelsURL(from: baseURL), apiKey.isEmpty == false else {
             applyModels(AppSettings.fallbackModels)
             return
@@ -191,9 +315,9 @@ final class SettingsWindowController: NSWindowController {
         modelPopup.addItems(withTitles: uniqueModels)
         modelPopup.selectItem(withTitle: settings.model)
         if let remoteCount {
-            statusLabel.stringValue = "已加载 \(uniqueModels.count) 个模型，接口返回 \(remoteCount) 个。"
+            showStatus("已加载 \(uniqueModels.count) 个模型，接口返回 \(remoteCount) 个。", isError: false)
         } else {
-            statusLabel.stringValue = "接口未返回完整模型列表，已使用内置模型列表。"
+            showStatus("接口未返回完整模型列表，已使用内置模型列表。", isError: false)
         }
     }
 
