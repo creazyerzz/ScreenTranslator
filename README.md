@@ -1,17 +1,26 @@
 # ScreenTranslator
 
-独立 macOS 截图翻译工具。常驻菜单栏，支持快捷键框选屏幕区域，本机 OCR 后调用 OpenAI 兼容的 `/v1/chat/completions` 接口翻译。
+开源的 macOS 截图翻译工具。常驻菜单栏，快捷键框选屏幕区域，本机 OCR 识别文字后调用大模型接口翻译。
+
+不绑定任何服务商：只要是 OpenAI 兼容的 `/v1/chat/completions` 接口都可以用——OpenAI 官方、各类 API 中转站、自建网关（如 one-api、new-api）、本地推理服务（如 Ollama、LM Studio）均可。
 
 ## 接口配置
 
 首次运行后在菜单栏点击 `译` -> `设置`，填写：
 
-- API 地址：任意 OpenAI 兼容接口，如 `https://your-api-host/v1/chat/completions`
-- 模型：如 `gpt-5.4-mini`，支持手动输入或从接口拉取的列表中选择
-- 目标语言：默认 `中文`
-- API Key：你的接口密钥
+| 配置项 | 说明 |
+|--------|------|
+| API 地址 | 你的中转站或服务商的完整接口地址，如 `https://your-api-host/v1/chat/completions` |
+| 模型 | 可点右侧刷新按钮从接口 `/models` 拉取列表选择，也可以直接手动输入任意模型名 |
+| 目标语言 | 默认中文，可下拉选择或输入任意语言 |
+| API Key | 你自己的密钥（`sk-...`） |
 
-API Key 会以明文写入当前用户的应用配置（本机 `~/Library/Preferences/`，不在项目目录内），不访问 macOS Keychain。
+填好后建议先点 `测试连接` 验证，再点 `保存`。
+
+隐私说明：
+
+- API Key 只以明文保存在本机 `~/Library/Preferences/` 下的应用配置中，不在项目目录内，不会被提交或上传
+- 截图 OCR 由 Apple Vision 在本地完成，图片不出本机，只把识别出的文本发给你配置的翻译接口
 
 ## 运行
 
@@ -71,3 +80,7 @@ open build/ScreenTranslator.app
 - 截图框选优先覆盖鼠标所在屏幕。
 - OCR 使用 Apple Vision，本地完成，不上传截图；开启自动语言检测，覆盖中英日韩法德西俄葡。
 - 只上传 OCR 识别后的文本到翻译接口。
+
+## License
+
+[MIT](LICENSE)
