@@ -1,15 +1,31 @@
 import Foundation
 
+struct TranslatorConfig: Sendable {
+    let baseURL: String
+    let model: String
+    let apiKey: String
+    let targetLanguage: String
+}
+
 @MainActor
 final class TranslatorClient {
-    private let settings: AppSettings
+    private let config: TranslatorConfig
 
-    init(settings: AppSettings) {
-        self.settings = settings
+    init(config: TranslatorConfig) {
+        self.config = config
+    }
+
+    convenience init(settings: AppSettings) {
+        self.init(config: TranslatorConfig(
+            baseURL: settings.baseURL,
+            model: settings.model,
+            apiKey: settings.apiKey,
+            targetLanguage: settings.targetLanguage
+        ))
     }
 
     func translate(text: String, completion: @escaping @Sendable (Result<String, Error>) -> Void) {
-        let baseURL = settings.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
             let url = URL(string: baseURL),
             let scheme = url.scheme?.lowercased(),
@@ -22,12 +38,12 @@ final class TranslatorClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(settings.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
 
         let prompt = """
-        你是专业文档翻译助手。请把用户提供的文本翻译成\(settings.targetLanguage)。
+        你是专业文档翻译助手。请把用户提供的文本翻译成\(config.targetLanguage)。
         要求：
         1. 只输出译文，不解释。
         2. 保留专有名词、缩写、金额、编号、URL 和代码片段。
@@ -39,7 +55,7 @@ final class TranslatorClient {
         """
 
         let body = ChatCompletionRequest(
-            model: settings.model,
+            model: config.model,
             messages: [
                 .init(role: "system", content: "You are a precise translation engine."),
                 .init(role: "user", content: prompt)

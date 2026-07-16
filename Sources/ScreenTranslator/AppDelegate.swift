@@ -14,9 +14,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureDefaults()
+        configureMainMenu()
         configureStatusMenu()
         installHotkeyMonitors()
         _ = TranslationHistoryStore.shared.entries()
+    }
+
+    /// 菜单栏应用默认没有主菜单，导致 Cmd+C/V 等编辑快捷键失效，这里补一个隐藏的编辑菜单。
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "退出",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -30,11 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureDefaults() {
         AppSettings.defaults.register(defaults: [
-            AppSettings.Keys.baseURL: "https://kaizo.top/v1/chat/completions",
+            AppSettings.Keys.baseURL: "",
             AppSettings.Keys.model: AppSettings.defaultModel,
             AppSettings.Keys.targetLanguage: "中文",
             AppSettings.Keys.sourceLanguage: "auto",
-            AppSettings.Keys.apiKey: ""
+            AppSettings.Keys.apiKey: "",
+            AppSettings.Keys.autoCopyTranslation: false
         ])
     }
 
@@ -43,9 +74,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.toolTip = "Screen Translator"
 
         let menu = NSMenu()
-        menu.addItem(menuItem(title: "截图翻译", keyEquivalent: "") { [weak self] in
+        let captureItem = menuItem(title: "截图翻译", keyEquivalent: "t") { [weak self] in
             self?.beginCapture()
+        }
+        captureItem.keyEquivalentModifierMask = [.control, .option]
+        menu.addItem(captureItem)
+        menu.addItem(menuItem(title: "显示上次结果", keyEquivalent: "r") { [weak self] in
+            self?.showLastResult()
         })
+        menu.addItem(.separator())
         menu.addItem(menuItem(title: "设置", keyEquivalent: ",") { [weak self] in
             self?.openSettings()
         })
@@ -108,6 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.show()
     }
 
+    private func showLastResult() {
+        guard let resultWindow else {
+            showAlert(title: "暂无结果", message: "本次启动后还没有翻译记录，可先用快捷键或菜单发起截图翻译。")
+            return
+        }
+        resultWindow.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func openHistory() {
         if historyWindow == nil {
             historyWindow = HistoryWindowController()
@@ -120,9 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard AppSettings.shared.apiKey.isEmpty == false else {
+        guard AppSettings.shared.baseURL.isEmpty == false,
+              AppSettings.shared.apiKey.isEmpty == false else {
             openSettings()
-            showAlert(title: "需要 API Key", message: "请先在设置里保存 API Key。")
+            showAlert(title: "需要完成配置", message: "请先在设置里填写 API 地址和 API Key 并保存。")
             return
         }
 
@@ -155,28 +202,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func processCapturedImage(_ image: CGImage) {
-        showBusyResult()
+        setStatusBusy(true)
+        showResult(.recognizing)
 
         OCRService.recognize(image: image) { [weak self] result in
             Task { @MainActor in
                 switch result {
                 case .success(let text):
                     guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-                        self?.showResult(original: "", translated: "没有识别到文字。")
+                        self?.setStatusBusy(false)
+                        self?.showResult(.failure(original: "", message: "没有识别到文字，请尝试放大内容后重新框选。"))
                         return
                     }
                     self?.translate(text)
                 case .failure(let error):
-                    self?.showResult(original: "", translated: "OCR 失败：\(error.localizedDescription)")
+                    self?.setStatusBusy(false)
+                    self?.showResult(.failure(original: "", message: "OCR 失败：\(error.localizedDescription)"))
                 }
             }
         }
     }
 
     private func translate(_ text: String) {
-        showResult(original: text, translated: "正在翻译...")
+        setStatusBusy(true)
+        showResult(.translating(original: text))
         TranslatorClient(settings: .shared).translate(text: text) { [weak self] result in
             Task { @MainActor in
+                self?.setStatusBusy(false)
                 switch result {
                 case .success(let translated):
                     TranslationHistoryStore.shared.add(
@@ -184,23 +236,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         translated: translated,
                         model: AppSettings.shared.model
                     )
-                    self?.showResult(original: text, translated: translated)
+                    self?.showResult(.success(original: text, translated: translated))
                 case .failure(let error):
-                    self?.showResult(original: text, translated: "翻译失败：\(error.localizedDescription)")
+                    self?.showResult(.failure(original: text, message: "翻译失败：\(error.localizedDescription)"))
                 }
             }
         }
     }
 
-    private func showBusyResult() {
-        showResult(original: "", translated: "正在识别并翻译...")
+    private func setStatusBusy(_ busy: Bool) {
+        statusItem.button?.title = busy ? "…" : "译"
+        statusItem.button?.appearsDisabled = busy
     }
 
-    private func showResult(original: String, translated: String) {
+    private func showResult(_ state: ResultWindowController.DisplayState) {
         if resultWindow == nil {
-            resultWindow = ResultWindowController()
+            let controller = ResultWindowController()
+            controller.onRetranslate = { [weak self] original in
+                self?.translate(original)
+            }
+            resultWindow = controller
         }
-        resultWindow?.show(original: original, translated: translated)
+        resultWindow?.apply(state: state)
     }
 
     private func showAlert(title: String, message: String) {

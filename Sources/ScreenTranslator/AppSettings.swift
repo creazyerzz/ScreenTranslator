@@ -4,32 +4,20 @@ import Foundation
 final class AppSettings {
     static let shared = AppSettings()
     static let defaults = UserDefaults(suiteName: "local.screentranslator.settings") ?? .standard
+    /// 仅作为下拉示例；实际列表优先从所配置接口的 /models 拉取，也支持手动输入任意模型名。
     static let fallbackModels = [
-        "gpt-5.4",
         "gpt-5.4-mini",
-        "gpt-5.5",
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-image-2",
-        "claude-fable-5",
-        "claude-haiku-4-5-20251001",
-        "claude-opus-4-5-20251101",
-        "claude-opus-4-6",
-        "claude-opus-4-7",
-        "claude-opus-4-7-max",
-        "claude-opus-4-8",
-        "claude-sonnet-4-6",
+        "gpt-5.4",
         "claude-sonnet-5",
-        "gemini-3-flash-preview",
-        "gemini-3.1-pro-preview",
+        "claude-opus-4-8",
         "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
-        "claude-sonnet-4-5-20250929",
-        "claude-opus-4-5-20251101-thinking",
-        "claude-sonnet-4-5-20250929-thinking"
+        "gemini-3.1-pro-preview"
     ]
     static let defaultModel = "gpt-5.4-mini"
+    static let commonTargetLanguages = [
+        "中文", "英文", "日文", "韩文",
+        "法文", "德文", "西班牙文", "俄文", "葡萄牙文"
+    ]
 
     enum Keys {
         static let baseURL = "baseURL"
@@ -37,10 +25,11 @@ final class AppSettings {
         static let targetLanguage = "targetLanguage"
         static let sourceLanguage = "sourceLanguage"
         static let apiKey = "apiKey"
+        static let autoCopyTranslation = "autoCopyTranslation"
     }
 
     var baseURL: String {
-        get { Self.defaults.string(forKey: Keys.baseURL) ?? "https://kaizo.top/v1/chat/completions" }
+        get { Self.defaults.string(forKey: Keys.baseURL) ?? "" }
         set { Self.defaults.set(newValue, forKey: Keys.baseURL) }
     }
 
@@ -66,6 +55,11 @@ final class AppSettings {
     var apiKey: String {
         get { Self.defaults.string(forKey: Keys.apiKey) ?? "" }
         set { Self.defaults.set(newValue, forKey: Keys.apiKey) }
+    }
+
+    var autoCopyTranslation: Bool {
+        get { Self.defaults.bool(forKey: Keys.autoCopyTranslation) }
+        set { Self.defaults.set(newValue, forKey: Keys.autoCopyTranslation) }
     }
 
     static func normalizedModel(_ value: String?) -> String? {
