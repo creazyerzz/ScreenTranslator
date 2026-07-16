@@ -31,8 +31,8 @@ final class AppSettings {
     ]
     static let defaultModel = "gpt-5.4-mini"
     static let commonTargetLanguages = [
-        "中文", "English", "日本語", "한국어",
-        "Français", "Deutsch", "Español", "Русский", "Português"
+        "中文", "英文", "日文", "韩文",
+        "法文", "德文", "西班牙文", "俄文", "葡萄牙文"
     ]
 
     enum Keys {

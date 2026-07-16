@@ -3,7 +3,7 @@ import AppKit
 @MainActor
 final class SettingsWindowController: NSWindowController {
     private let baseURLField = NSTextField()
-    private let modelPopup = NSPopUpButton()
+    private let modelCombo = NSComboBox()
     private let targetLanguageCombo = NSComboBox()
     private let apiKeySecureField = NSSecureTextField()
     private let apiKeyPlainField = NSTextField()
@@ -52,8 +52,11 @@ final class SettingsWindowController: NSWindowController {
         stack.addArrangedSubview(row(label: "API 地址", control: baseURLField))
         baseURLField.placeholderString = "https://example.com/v1/chat/completions"
 
-        modelPopup.addItems(withTitles: AppSettings.fallbackModels)
-        modelPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+        modelCombo.usesDataSource = false
+        modelCombo.addItems(withObjectValues: AppSettings.fallbackModels)
+        modelCombo.completes = true
+        modelCombo.toolTip = "可以直接输入模型名，也可以从下拉列表选择"
+        modelCombo.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
 
         let refreshModelsButton = NSButton(title: "", target: self, action: #selector(refreshModels))
         refreshModelsButton.image = NSImage(
@@ -64,7 +67,7 @@ final class SettingsWindowController: NSWindowController {
         refreshModelsButton.toolTip = "从当前 API 刷新模型列表"
         refreshModelsButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let modelControls = NSStackView(views: [modelPopup, refreshModelsButton])
+        let modelControls = NSStackView(views: [modelCombo, refreshModelsButton])
         modelControls.orientation = .horizontal
         modelControls.alignment = .centerY
         modelControls.spacing = 8
@@ -182,10 +185,15 @@ final class SettingsWindowController: NSWindowController {
     private func loadValues() {
         let settings = AppSettings.shared
         baseURLField.stringValue = settings.baseURL
-        modelPopup.selectItem(withTitle: settings.model)
+        modelCombo.stringValue = settings.model
         targetLanguageCombo.stringValue = settings.targetLanguage
         apiKeyValue = settings.apiKey
         autoCopyCheckbox.state = settings.autoCopyTranslation ? .on : .off
+    }
+
+    private var modelValue: String {
+        let trimmed = modelCombo.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? AppSettings.defaultModel : trimmed
     }
 
     @objc private func save() {
@@ -204,7 +212,7 @@ final class SettingsWindowController: NSWindowController {
         }
 
         settings.baseURL = baseURL
-        settings.model = modelPopup.selectedItem?.title ?? AppSettings.defaultModel
+        settings.model = modelValue
         settings.targetLanguage = targetLanguage
         settings.apiKey = apiKey
         settings.autoCopyTranslation = autoCopyCheckbox.state == .on
@@ -222,7 +230,7 @@ final class SettingsWindowController: NSWindowController {
         // 用当前填写值构造临时配置测试，不影响已保存配置
         let config = TranslatorConfig(
             baseURL: baseURL,
-            model: modelPopup.selectedItem?.title ?? AppSettings.defaultModel,
+            model: modelValue,
             apiKey: apiKey,
             targetLanguage: targetLanguageCombo.stringValue.isEmpty ? "中文" : targetLanguageCombo.stringValue
         )
@@ -311,9 +319,10 @@ final class SettingsWindowController: NSWindowController {
             uniqueModels.insert(settings.model, at: 0)
         }
 
-        modelPopup.removeAllItems()
-        modelPopup.addItems(withTitles: uniqueModels)
-        modelPopup.selectItem(withTitle: settings.model)
+        let currentInput = modelCombo.stringValue
+        modelCombo.removeAllItems()
+        modelCombo.addItems(withObjectValues: uniqueModels)
+        modelCombo.stringValue = currentInput.isEmpty ? settings.model : currentInput
         if let remoteCount {
             showStatus("已加载 \(uniqueModels.count) 个模型，接口返回 \(remoteCount) 个。", isError: false)
         } else {

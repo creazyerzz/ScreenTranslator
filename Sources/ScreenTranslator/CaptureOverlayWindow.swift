@@ -39,12 +39,22 @@ final class CaptureOverlayWindow: NSWindow {
 
 @MainActor
 final class CaptureOverlayView: NSView {
+    private enum Phase {
+        case idle
+        case dragging
+        case selected
+    }
+
     private let screen: NSScreen
     private let onCapture: (CGImage) -> Void
     private let onCancel: () -> Void
     private var startPoint: CGPoint?
     private var currentPoint: CGPoint?
+    private var phase: Phase = .idle
     private var isCompleting = false
+
+    private let confirmButton = NSButton(title: "翻译", target: nil, action: nil)
+    private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
 
     init(screen: NSScreen, onCapture: @escaping (CGImage) -> Void, onCancel: @escaping () -> Void) {
         self.screen = screen
@@ -53,6 +63,7 @@ final class CaptureOverlayView: NSView {
         super.init(frame: NSRect(origin: .zero, size: screen.frame.size))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        configureButtons()
     }
 
     required init?(coder: NSCoder) {
@@ -61,15 +72,40 @@ final class CaptureOverlayView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    private func configureButtons() {
+        confirmButton.target = self
+        confirmButton.action = #selector(confirmSelection)
+        confirmButton.bezelStyle = .rounded
+        confirmButton.keyEquivalent = "\r"
+        confirmButton.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "翻译")
+        confirmButton.imagePosition = .imageLeading
+        confirmButton.isHidden = true
+
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelFromButton)
+        cancelButton.bezelStyle = .rounded
+        cancelButton.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "取消")
+        cancelButton.imagePosition = .imageLeading
+        cancelButton.isHidden = true
+
+        addSubview(confirmButton)
+        addSubview(cancelButton)
+    }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         addCursorRect(bounds, cursor: .crosshair)
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 {
+        switch event.keyCode {
+        case 53: // Esc
             cancel()
-        } else {
+        case 36, 76: // Return / Enter
+            if phase == .selected {
+                confirmSelection()
+            }
+        default:
             super.keyDown(with: event)
         }
     }
@@ -80,36 +116,43 @@ final class CaptureOverlayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard isCompleting == false else { return }
+        // 点击到按钮时交给按钮处理
+        let point = convert(event.locationInWindow, from: nil)
+        if confirmButton.isHidden == false,
+           confirmButton.frame.contains(point) || cancelButton.frame.contains(point) {
+            super.mouseDown(with: event)
+            return
+        }
+
+        hideActionButtons()
+        phase = .dragging
         startPoint = boundedPoint(from: event)
         currentPoint = startPoint
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard startPoint != nil, isCompleting == false else { return }
+        guard phase == .dragging, isCompleting == false else { return }
         currentPoint = boundedPoint(from: event)
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard startPoint != nil, isCompleting == false else { return }
+        guard phase == .dragging, isCompleting == false else { return }
         currentPoint = boundedPoint(from: event)
         let selection = normalizedSelection()
         guard selection.width > 6, selection.height > 6 else {
-            cancel()
+            // 无效框选：回到初始状态，等待重新拖选
+            phase = .idle
+            startPoint = nil
+            currentPoint = nil
+            needsDisplay = true
             return
         }
 
-        isCompleting = true
-        window?.orderOut(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            guard let self else { return }
-            if let image = self.capture(selection: selection) {
-                self.onCapture(image)
-            } else {
-                self.onCancel()
-            }
-        }
+        phase = .selected
+        showActionButtons(around: selection)
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -131,6 +174,10 @@ final class CaptureOverlayView: NSView {
         path.stroke()
 
         drawSelectionSize(selection)
+
+        if phase == .selected {
+            drawConfirmHint(selection)
+        }
     }
 
     private func drawInstruction() {
@@ -147,6 +194,46 @@ final class CaptureOverlayView: NSView {
             height: size.height
         )
         text.draw(in: rect, withAttributes: attributes)
+    }
+
+    private func drawConfirmHint(_ selection: NSRect) {
+        let text = "回车确认翻译，重新拖动可调整选区"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.85)
+        ]
+        let size = text.size(withAttributes: attributes)
+        let x = min(max(selection.minX, bounds.minX + 4), bounds.maxX - size.width - 4)
+        let y = min(selection.maxY + 34, bounds.maxY - size.height - 4)
+        text.draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
+    }
+
+    private func showActionButtons(around selection: NSRect) {
+        confirmButton.sizeToFit()
+        cancelButton.sizeToFit()
+
+        let spacing: CGFloat = 8
+        let totalWidth = confirmButton.frame.width + spacing + cancelButton.frame.width
+        let buttonHeight = max(confirmButton.frame.height, cancelButton.frame.height)
+
+        // 优先放在选区下方右对齐，放不下则放上方
+        var x = selection.maxX - totalWidth
+        x = min(max(x, bounds.minX + 8), bounds.maxX - totalWidth - 8)
+        var y = selection.minY - buttonHeight - 10
+        if y < bounds.minY + 8 {
+            y = min(selection.maxY + 10, bounds.maxY - buttonHeight - 8)
+        }
+
+        cancelButton.setFrameOrigin(NSPoint(x: x, y: y))
+        confirmButton.setFrameOrigin(NSPoint(x: x + cancelButton.frame.width + spacing, y: y))
+        cancelButton.isHidden = false
+        confirmButton.isHidden = false
+        window?.makeFirstResponder(self)
+    }
+
+    private func hideActionButtons() {
+        confirmButton.isHidden = true
+        cancelButton.isHidden = true
     }
 
     private func normalizedSelection() -> CGRect {
@@ -175,10 +262,10 @@ final class CaptureOverlayView: NSView {
         let textSize = text.size(withAttributes: attributes)
         let badgeSize = NSSize(width: textSize.width + 12, height: textSize.height + 6)
         let x = min(max(selection.minX, bounds.minX + 4), bounds.maxX - badgeSize.width - 4)
-        let preferredY = selection.minY - badgeSize.height - 6
-        let y = preferredY >= bounds.minY + 4
+        let preferredY = selection.maxY + 6
+        let y = preferredY <= bounds.maxY - badgeSize.height - 4
             ? preferredY
-            : min(selection.maxY + 6, bounds.maxY - badgeSize.height - 4)
+            : max(selection.minY - badgeSize.height - 6, bounds.minY + 4)
         let badgeRect = NSRect(origin: NSPoint(x: x, y: y), size: badgeSize)
 
         NSColor.black.withAlphaComponent(0.78).setFill()
@@ -187,6 +274,28 @@ final class CaptureOverlayView: NSView {
             at: NSPoint(x: badgeRect.minX + 6, y: badgeRect.minY + 3),
             withAttributes: attributes
         )
+    }
+
+    @objc private func confirmSelection() {
+        guard phase == .selected, isCompleting == false else { return }
+        let selection = normalizedSelection()
+        guard selection.width > 6, selection.height > 6 else { return }
+
+        isCompleting = true
+        hideActionButtons()
+        window?.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self else { return }
+            if let image = self.capture(selection: selection) {
+                self.onCapture(image)
+            } else {
+                self.onCancel()
+            }
+        }
+    }
+
+    @objc private func cancelFromButton() {
+        cancel()
     }
 
     private func cancel() {
