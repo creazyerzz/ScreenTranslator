@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureDefaults() {
         AppSettings.defaults.register(defaults: [
-            AppSettings.Keys.baseURL: "https://kaizo.top/v1/chat/completions",
+            AppSettings.Keys.baseURL: "",
             AppSettings.Keys.model: AppSettings.defaultModel,
             AppSettings.Keys.targetLanguage: "中文",
             AppSettings.Keys.sourceLanguage: "auto",
@@ -166,9 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard AppSettings.shared.apiKey.isEmpty == false else {
+        guard AppSettings.shared.baseURL.isEmpty == false,
+              AppSettings.shared.apiKey.isEmpty == false else {
             openSettings()
-            showAlert(title: "需要 API Key", message: "请先在设置里保存 API Key。")
+            showAlert(title: "需要完成配置", message: "请先在设置里填写 API 地址和 API Key 并保存。")
             return
         }
 

@@ -45,7 +45,7 @@ final class AppSettings {
     }
 
     var baseURL: String {
-        get { Self.defaults.string(forKey: Keys.baseURL) ?? "https://kaizo.top/v1/chat/completions" }
+        get { Self.defaults.string(forKey: Keys.baseURL) ?? "" }
         set { Self.defaults.set(newValue, forKey: Keys.baseURL) }
     }
 

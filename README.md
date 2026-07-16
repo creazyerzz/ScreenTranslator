@@ -2,13 +2,16 @@
 
 独立 macOS 截图翻译工具。常驻菜单栏，支持快捷键框选屏幕区域，本机 OCR 后调用 OpenAI 兼容的 `/v1/chat/completions` 接口翻译。
 
-## 默认接口
+## 接口配置
 
-- API 地址：`https://kaizo.top/v1/chat/completions`
-- 模型：`gpt-5.4-mini` 或 `gpt-5.4`
-- 目标语言：`中文`
+首次运行后在菜单栏点击 `译` -> `设置`，填写：
 
-首次运行后在菜单栏点击 `译` -> `设置`，选择模型、粘贴密钥并保存。API Key 会以明文写入当前用户的应用配置，不再访问 macOS Keychain；之后打开设置时也会直接显示。
+- API 地址：任意 OpenAI 兼容接口，如 `https://your-api-host/v1/chat/completions`
+- 模型：如 `gpt-5.4-mini`，支持手动输入或从接口拉取的列表中选择
+- 目标语言：默认 `中文`
+- API Key：你的接口密钥
+
+API Key 会以明文写入当前用户的应用配置（本机 `~/Library/Preferences/`，不在项目目录内），不访问 macOS Keychain。
 
 ## 运行
 

@@ -50,7 +50,7 @@ final class SettingsWindowController: NSWindowController {
         contentView.addSubview(stack)
 
         stack.addArrangedSubview(row(label: "API 地址", control: baseURLField))
-        baseURLField.placeholderString = "https://example.com/v1/chat/completions"
+        baseURLField.placeholderString = "https://your-api-host/v1/chat/completions"
 
         modelCombo.usesDataSource = false
         modelCombo.addItems(withObjectValues: AppSettings.fallbackModels)
